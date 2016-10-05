@@ -1,0 +1,158 @@
+#!/usr/bin/env perl
+use Mojolicious::Lite;
+use Mojo::Pg;
+
+use Data::Dumper;
+
+helper pg => sub { state $pg = Mojo::Pg->new('postgresql://postgres@/minecraft') };
+
+get '/' => sub {
+  my $c = shift;
+  $c->render(template => 'index');
+};
+
+get '/items' => sub {
+    my $c = shift;
+
+    my $db = $c->pg->db;
+    $c->render(json => $db->query('select * from waypoints')->hashes);
+};
+
+put '/items' => sub {
+    my $c = shift;
+
+    my $hash = $c->req->params->to_hash;
+    
+    my $db = $c->pg->db;
+    $db->query('update waypoints set x = ?, y = ?, z = ?, label = ?, description = ?, world = ? where waypoint_id = ?', $hash->{x}, $hash->{y}, $hash->{z}, $hash->{label}, $hash->{description}, $hash->{world}, $hash->{waypoint_id});
+
+    $c->rendered(200);
+    app->log->info('doing update: ' . Dumper($hash));
+};
+
+post '/items' => sub {
+    my $c = shift;
+
+    my $hash = $c->req->params->to_hash;
+    
+    my $db = $c->pg->db;
+    $db->query('insert into waypoints (x, y, z, label, description, world) values (?, ?, ?, ?, ?, ?)', $hash->{x}, $hash->{y}, $hash->{z}, $hash->{label}, $hash->{description}, $hash->{world});
+
+    $c->rendered(200);
+    app->log->info('doing insert: ' . Dumper($hash));
+};
+
+del '/items' => sub {
+    my $c = shift;
+
+    my $hash = $c->req->params->to_hash;
+    
+    my $db = $c->pg->db;
+    $db->query('delete from waypoints where waypoint_id = ?', $hash->{waypoint_id});
+
+    $c->rendered(200);
+    app->log->info('doing delete: ' . Dumper($hash));
+};
+
+
+app->start;
+__DATA__
+
+@@ index.html.ep
+<!DOCTYPE html>
+
+  <script src="http://code.jquery.com/jquery-1.11.1.min.js"></script>
+
+  <link type="text/css" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jsgrid/1.5.2/jsgrid.min.css" />
+  <link type="text/css" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jsgrid/1.5.2/jsgrid-theme.min.css" />
+     
+  <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jsgrid/1.5.2/jsgrid.min.js"></script>
+
+
+
+<html>
+  <%= label_for x_coord => 'X/Z Coordinates'%>
+  <%= input_tag 'x_coord', id => 'x_coord', value => 0%>
+  <%= input_tag 'z_coord', id => 'z_coord', value => 0%>
+  <div id="jsGrid"></div>
+  <script>
+
+    var countries = [
+        { Name: "", Id: 0 },
+        { Name: "United States", Id: 1 },
+        { Name: "Canada", Id: 2 },
+        { Name: "United Kingdom", Id: 3 }
+    ];
+ 
+    $("#jsGrid").jsGrid({
+        width: "100%",
+        height: "400px",
+        pageSize: 30,
+ 
+        inserting: true,
+        editing: true,
+        sorting: true,
+        paging: true,
+        autoload: true,
+ 
+        controller: {
+            loadData: function() {
+                var deferred = $.Deferred();
+
+                $.ajax({
+                    type: 'GET',
+                    url: '/items',
+                    dataType: 'json',
+                    success: function(data) {
+                        $.each(data, function( index, item ) {
+                            var dx = Number(item.x) - Number(document.getElementById('x_coord').value);
+                            var dz = Number(item.z) - Number(document.getElementById('z_coord').value);
+                            item.distance = Math.round( Math.sqrt( dx*dx + dz*dz ) );
+                        });
+                        deferred.resolve(data);
+                    }
+
+                });
+                return deferred.promise();
+            },
+            insertItem: function(item) {
+                return $.ajax({
+                    type: 'POST',
+                    url: '/items',
+                    data: item
+                });
+            },
+            updateItem: function(item) {
+                return $.ajax({
+                    type: 'PUT',
+                    url: '/items',
+                    data: item
+                });
+            },
+            deleteItem: function(item) {
+                return $.ajax({
+                    type: 'DELETE',
+                    url: '/items',
+                    data: item
+                });
+            }
+
+
+
+        },
+ 
+        fields: [
+            { name: "x", title: 'X', type: "number", width: 50, validate: "required" },
+            { name: "y", title: 'Y', type: "number", width: 50, validate: "required" },
+            { name: "z", title: 'Z', type: "number", width: 50, validate: "required" },
+            { name: "distance", title: 'Distance', type: "number", width: 50, editing: false },
+            { name: "label", title: 'Label', type: "text", width: 100 },
+            { name: "description", title: 'Description', type: "text", width: 200 },
+            { name: "world", title: 'World', type: "text", width: 40 },
+            { type: "control" }
+        ]
+    });
+</script>
+
+
+</html>
