@@ -136,10 +136,11 @@ __DATA__
             { name: "x", title: 'X', type: "number", width: 50, validate: "required" },
             { name: "y", title: 'Y', type: "number", width: 50, validate: "required" },
             { name: "z", title: 'Z', type: "number", width: 50, validate: "required" },
-            { name: "distance", title: 'Distance', type: "number", width: 50, editing: false },
-            { name: "label", title: 'Label', type: "text", width: 100 },
+            { name: "distance", title: 'Distance', type: "number", width: 50,
+              editing: false, inserting: false },
+            { name: "label", title: 'Label', type: "text", width: 100, validate: "required" },
             { name: "description", title: 'Description', type: "text", width: 200 },
-            { name: "world", title: 'World', type: "text", width: 40 },
+            { name: "world", title: 'World', type: "text", width: 40, validate: "required" },
             { type: "control" }
         ]
     });
