@@ -1,10 +1,24 @@
 #!/usr/bin/env perl
 use Mojolicious::Lite;
 use Mojo::Pg;
+use Mojo::IRC;
 
 use Data::Dumper;
 
-helper pg => sub { state $pg = Mojo::Pg->new('postgresql://postgres@/minecraft') };
+helper pg => sub { state $pg = Mojo::Pg->new('postgresql://script@/minecraft') };
+
+my $config = plugin Config => {file => 'config/waypoint_manager.conf'};
+
+my $irc = Mojo::IRC->new(
+    nick => $config->{nick},
+    user => $config->{user},
+    server => $config->{server},
+    );
+
+$irc->connect(sub {
+    my($irc, $err) = @_;
+    return app->log->error($err) if $err;
+	      });
 
 get '/' => sub {
   my $c = shift;
@@ -27,7 +41,7 @@ put '/items' => sub {
     $db->query('update waypoints set x = ?, y = ?, z = ?, label = ?, description = ?, world = ? where waypoint_id = ?', $hash->{x}, $hash->{y}, $hash->{z}, $hash->{label}, $hash->{description}, $hash->{world}, $hash->{waypoint_id});
 
     $c->rendered(200);
-    app->log->info('doing update: ' . Dumper($hash));
+    app->log->debug('doing update: ' . Dumper($hash));
 };
 
 post '/items' => sub {
@@ -40,6 +54,10 @@ post '/items' => sub {
 
     $c->rendered(200);
     app->log->info('doing insert: ' . Dumper($hash));
+
+    my $msg = sprintf('Something new: %s (%s)',
+		      $hash->{label}, $hash->{description});
+    irc_notify($msg);
 };
 
 del '/items' => sub {
@@ -51,9 +69,31 @@ del '/items' => sub {
     $db->query('delete from waypoints where waypoint_id = ?', $hash->{waypoint_id});
 
     $c->rendered(200);
-    app->log->info('doing delete: ' . Dumper($hash));
+    app->log->debug('doing delete: ' . Dumper($hash));
 };
 
+post '/activity' => sub {
+    my $c = shift;
+
+    my $hash = $c->req->params->to_hash;
+
+    $c->rendered(200);
+    app->log->info('client says: ' . Dumper($hash));
+
+    my $waypoint;
+    ($waypoint = $hash->{label}) =~ s/ /_/g;
+    my $msg = sprintf('Someone set a base point: %s (.waypoint add %s x:%d y:%d z:%d)',
+		      $hash->{label}, $waypoint, $hash->{x}, $hash->{y}, $hash->{z});
+    irc_notify($msg);
+};
+
+sub irc_notify {
+    my $msg = shift;
+
+    foreach ( @{$config->{notify}} ) {
+       $irc->write(privmsg => $_, ":$msg");
+    }
+};
 
 app->start;
 __DATA__
@@ -62,32 +102,172 @@ __DATA__
 <!DOCTYPE html>
 
   <script src="http://code.jquery.com/jquery-1.11.1.min.js"></script>
+  <script src="http://code.jquery.com/ui/1.11.1/jquery-ui.min.js"></script>
 
   <link type="text/css" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jsgrid/1.5.2/jsgrid.min.css" />
   <link type="text/css" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jsgrid/1.5.2/jsgrid-theme.min.css" />
-     
+
+  <link type="text/css" rel="stylesheet" href="http://code.jquery.com/ui/1.11.1/themes/smoothness/jquery-ui.css" />
+
   <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jsgrid/1.5.2/jsgrid.min.js"></script>
 
-
+<script src="dist/clipboard.min.js"></script>
 
 <html>
   <%= label_for x_coord => 'X/Z Coordinates'%>
   <%= input_tag 'x_coord', id => 'x_coord', value => 0%>
   <%= input_tag 'z_coord', id => 'z_coord', value => 0%>
   <div id="jsGrid"></div>
+
+  <div id="dialog-form" title="Waypoint">
+      <form id="detailForm">
+          <p><label>X: <input id="X" /></label></p>
+          <p><label>Y: <input id="Y" /></label></p>
+          <p><label>Z: <input id="Z" /></label></p>
+          <p><label>Label: <input id="label" /></label></p>
+          <p><label>Description: <input id="description" /></label></p>
+          <p><label>World: <input id="world" /></label></p>
+          <p><label id=cmd_label>Cmd: <input id="cmd" /></label></p>
+      </form>
+  </div>
+
   <script>
+
+var dialog = $("#dialog-form").dialog({
+    autoOpen: false,
+    width: 400,
+    modal: true,
+    closeOnEscape: true,
+    buttons: {
+        Copy: function() {
+            clipboard.copy( getCmd() );
+            console.log( getCmd() );
+        },
+        Base: function() {
+            var x = $("#X").val();
+            var y = $("#Y").val();
+            var z = $("#Z").val();
+            var label = $("#label").val();
+            var description = $("#description").val();
+            var world = $("#world").val();
+            $("#x_coord").val( x );
+            $("#z_coord").val( z );
+            $("#jsGrid").jsGrid( "loadData" );
+            $(this).dialog("close");
+            $.ajax({
+                type: 'POST',
+                url: '/activity',
+                data: { action: 'base', x: x, y: y, z: z, label: label, description: description, world: world }
+            });
+            console.log(x);
+
+        },
+        Save: function() {
+            $("#detailForm").submit();
+        },
+        Cancel: function() {
+            $(this).dialog("close");
+        }
+    },
+    close: function() {
+        dialog.find("form")[0].reset();
+    }
+});
+
+var submitHandler;
+
+dialog.find("form").submit(function(e) {
+    e.preventDefault();
+    submitHandler();
+});
+
+var showDetailsDialog = function(dialogType, detail) {
+    submitHandler = function(event) {
+        //if($("#categoryForm").valid()) {
+        saveClient(detail, dialogType === "Add");
+        //}
+    };
+
+    $("#X").val(detail.x);
+    $("#Y").val(detail.y);
+    $("#Z").val(detail.z);
+    $("#label").val(detail.label);
+    $("#description").val(detail.description);
+    $("#world").val(detail.world || '2b2t' );
+    if ( dialogType === 'Edit' ) {
+        var cmd = getCmd();
+        $("#cmd").show();
+        $("#cmd_label").show();
+        $("#cmd").val(cmd);
+        $('.ui-dialog-buttonpane button:contains("Copy")').button().show()
+    } else {
+        $("#cmd_label").hide();
+        $("#cmd").hide();
+        $('.ui-dialog-buttonpane button:contains("Copy")').button().hide()
+    }
+
+    dialog.dialog("option", "title", dialogType + " category").dialog("open");
+};
+
+var getCmd = function() {
+    return '.waypoint add ' + $("#label").val().replace(/ /g,"_") + ' x:' + $("#X").val() + ' y:' + $("#Y").val() + ' z:' + $("#Z").val();
+};
+
+var saveClient = function(detail, isNew) {
+    var failures = '';
+
+    if ( !isInt( $("#X").val() ) )  { failures += "X must be an integer\n" }
+    if ( !isInt( $("#Y").val() ) )  { failures += "Y must be an integer\n" }
+    if ( !isInt( $("#Z").val() ) )  { failures += "Z must be an integer\n" }
+    if ( isEmpty($("#label").val()) ) { failures += "Label can\'t be blank\n" }
+    if ( isEmpty($("#world").val()) ) { failures += "World can\'t be blank\n" }
+
+    if ( failures ) {
+        alert(failures);
+        return;
+    }
+
+    $.extend(detail, {
+        x: $("#X").val(),
+        y: $("#Y").val(),
+        z: $("#Z").val(),
+        label: $("#label").val(),
+        description: $("#description").val(),
+        world: $("#world").val()
+    });
+
+    $("#jsGrid").jsGrid(isNew ? "insertItem" : "updateItem", detail);
+
+    dialog.dialog("close");
+};
+
+function isEmpty(str){
+    return !str.replace(/^\s+/g, '').length; // boolean (`true` if field is empty)
+}
+
+function isInt(value) {
+
+    var er = /^-?[0-9]+$/;
+
+    return er.test(value);
+}
+
 
     $("#jsGrid").jsGrid({
         width: "100%",
         height: "500px",
         pageSize: 30,
  
-        inserting: true,
+        inserting: false,
         editing: true,
         sorting: true,
         paging: false,
         autoload: true,
- 
+
+        rowClick: function(args) {
+            showDetailsDialog("Edit", args.item);
+        },
+
         controller: {
             loadData: function() {
                 var deferred = $.Deferred();
@@ -141,7 +321,18 @@ __DATA__
             { name: "label", title: 'Label', type: "text", width: 100, validate: "required" },
             { name: "description", title: 'Description', type: "text", width: 200 },
             { name: "world", title: 'World', type: "text", width: 40, validate: "required" },
-            { type: "control" }
+//            { type: "control" }
+            {
+                type: "control",
+                modeSwitchButton: false,
+                editButton: false,
+                headerTemplate: function() {
+                    return $("<button>").attr("type", "button").text("Add")
+                            .on("click", function() {
+                                showDetailsDialog("Add", {});
+                            });
+                }
+            }
         ]
     });
   </script>

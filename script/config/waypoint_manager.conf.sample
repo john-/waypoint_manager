@@ -1,0 +1,6 @@
+{
+	server => 'localhost',
+	nick => 'mynick',
+	user => 'This the bot',
+	notify => [ 'nick1', 'nick2' ],
+}

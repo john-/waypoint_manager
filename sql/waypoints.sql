@@ -10,3 +10,5 @@ create table waypoints (
     unique (x, y, z, label)
 );
 
+grant select, update, delete, insert on waypoints to script;
+grant update on sequence waypoints_waypoint_id_seq to script;
