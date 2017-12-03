@@ -5,9 +5,11 @@ use Mojo::IRC;
 
 use Data::Dumper;
 
-helper pg => sub { state $pg = Mojo::Pg->new('postgresql://script@/minecraft') };
-
 my $config = plugin Config => {file => 'config/waypoint_manager.conf'};
+
+my $connect = sprintf('postgresql://script@%s/minecraft', $config->{database});
+
+helper pg => sub { state $pg = Mojo::Pg->new($connect) };
 
 my $irc = Mojo::IRC->new(
     nick => $config->{nick},
