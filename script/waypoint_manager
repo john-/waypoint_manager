@@ -23,15 +23,30 @@ $irc->connect(sub {
 	      });
 
 get '/' => sub {
-  my $c = shift;
-  $c->render(template => 'index');
+    my $c = shift;
+
+    my $db = $c->pg->db;
+    my $worlds_result = $db->query('select distinct on (world) world from waypoints order by world');
+
+    app->log->debug(Dumper($worlds_result));
+
+    my @worlds;
+    while (my $next = $worlds_result->array) {
+        push @worlds, $next->[0];
+    }
+    $c->stash( 'worlds' => \@worlds );
+#    foreach (@$worlds) {
+#        app->log->debug($_->[0]);
+#    }
+
+    $c->render(template => 'index');
 };
 
 get '/items' => sub {
     my $c = shift;
 
     my $db = $c->pg->db;
-    $c->render(json => $db->query('select * from waypoints')->hashes);
+    $c->render(json => $db->query('select * from waypoints order by entered desc')->hashes);
 };
 
 put '/items' => sub {
@@ -89,6 +104,38 @@ post '/activity' => sub {
     irc_notify($msg);
 };
 
+get '/get_waypoint_file' => sub {
+    my $c = shift;
+
+    app->log->info('user wants a waypoint file');
+
+    my $db = $c->pg->db;
+    my $waypoints = $db->query('select * from waypoints where world = \'<my default>\' order by entered desc')->hashes;
+
+    # XaeroWaypoints/Multiplayer_mcserver.blah.net/dim%0/mw-4,1,3_1.txt
+    # waypoint:Base:B:97:66:63:7:false:0:gui.xaero_default:false:0:false
+    #         :    :<x>:<y>:<z>:<color 0-15>: : :<set gui.xaero_default|user created    :<global true|false>
+
+    my @wp_file;
+    $waypoints->each(sub {
+        my $wp = shift;
+
+        my $fl = uc(substr($wp->{label}, 0, 1));
+
+        my $waystr = sprintf('waypoint:%s:%s:%d:%d:%d:%d:false:0:gui.xaero_default:false:0:false',
+                               $wp->{label}, $fl,
+                               $wp->{x}, $wp->{y}, $wp->{z},
+                               (ord($fl)-65) % 16, # color 0-15
+                              );
+        push @wp_file, $waystr;
+    });
+
+    $c->stash( 'raw_waypoints' => \@wp_file );
+    $c->render( template => 'raw' );
+    #$c->render(  text => @wp_file );
+    #$c->render(  json => {blah => -999}  );
+};
+
 sub irc_notify {
     my $msg = shift;
 
@@ -119,6 +166,10 @@ __DATA__
   <%= label_for x_coord => 'X/Z Coordinates'%>
   <%= input_tag 'x_coord', id => 'x_coord', value => 0%>
   <%= input_tag 'z_coord', id => 'z_coord', value => 0%>
+  <button type="button" id="gen_waypoints">Xaero Format</button>
+  <div id="raw_waypoints">
+  </div>
+
   <div id="jsGrid"></div>
 
   <div id="dialog-form" title="Waypoint">
@@ -162,7 +213,6 @@ var dialog = $("#dialog-form").dialog({
                 data: { action: 'base', x: x, y: y, z: z, label: label, description: description, world: world }
             });
             console.log(x);
-
         },
         Save: function() {
             $("#detailForm").submit();
@@ -254,16 +304,17 @@ function isInt(value) {
     return er.test(value);
 }
 
-
+$(function() {
     $("#jsGrid").jsGrid({
         width: "100%",
         height: "500px",
         pageSize: 30,
  
+        filtering: false,
         inserting: false,
         editing: true,
         sorting: true,
-        paging: false,
+        paging: true,
         autoload: true,
 
         rowClick: function(args) {
@@ -337,6 +388,31 @@ function isInt(value) {
             }
         ]
     });
+});
+
+
+    //function gen_waypoints() {
+
+    document.getElementById("gen_waypoints").addEventListener("click", function(){
+//        console.log(data);
+        $.ajax({
+            type: 'GET',
+            url: '/get_waypoint_file',
+            dataType: 'text',
+            success: function(data) {
+                $('#raw_waypoints').empty().append(data);
+            }
+        });
+
+    });
   </script>
 
 </html>
+
+@@raw.html.ep
+
+<textarea rows="10" cols="80">
+% foreach my $value ( @{ stash('raw_waypoints') } ) {
+<%= $value %>
+% }
+</textarea>
